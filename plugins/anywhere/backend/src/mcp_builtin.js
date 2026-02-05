@@ -193,7 +193,7 @@ const BUILTIN_SERVERS = {
     },
     "builtin_search": {
         id: "builtin_search",
-        name: "Web Search",
+        name: "Web Toolkit",
         description: "使用 DuckDuckGo 进行免费联网搜索，获取相关网页标题、链接和摘要；抓取网页内容。",
         type: "builtin",
         isActive: true,
@@ -356,11 +356,19 @@ const BUILTIN_TOOLS = {
     "builtin_bash": [
         {
             name: "execute_bash_command",
-            description: `Execute a shell command on the current ${currentOS} system. Note: Long-running commands (like servers) will be terminated after the timeout (default 15s) to prevent blocking.`,
+            description: `Execute a shell command on the current ${currentOS} system.
+IMPORTANT: The underlying shell is **${isWin ? "PowerShell" : "Bash"}**.
+- If on Windows: You MUST use PowerShell syntax (e.g., 'New-Item -ItemType Directory', 'if (Test-Path path) {}'). DO NOT use CMD/Batch syntax (like 'if exist') unless you explicitly wrap it in 'cmd /c'.
+- If on Linux/macOS: Use standard Bash syntax.
+Note: Long-running commands will be terminated after timeout.`,
             inputSchema: {
                 type: "object",
                 properties: {
-                    command: { type: "string", description: `The command to execute (e.g., 'ls -la', 'git status', 'npm install'). Current OS: ${currentOS}.` },
+                    command: { 
+                        type: "string", 
+                        // 在参数描述中再次强调环境
+                        description: `The command to execute. Ensure syntax matches ${isWin ? 'PowerShell' : 'Bash'}.` 
+                    },
                     timeout: {
                         type: "integer",
                         description: "Optional. Timeout in milliseconds. Default is 15000 (15 seconds). Set higher (e.g., 300000 for 5 mins) for long-running tasks like installations.",
@@ -848,15 +856,6 @@ ${userContext || 'No additional context provided.'}
     return generateStaticReport() + `\n\n[Instruction for Main Agent]: Please check the conversation context or files to see if the task was partially completed.`;
 }
 
-// 辅助函数：处理 LLM 传入的转义字符，将 \\n 转换为 \n
-const unescapeContent = (str) => {
-    if (typeof str !== 'string') return str;
-    return str
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t');
-};
-
 // --- Execution Handlers ---
 const handlers = {
     // Python
@@ -1179,9 +1178,9 @@ const handlers = {
 
             let content = await fs.promises.readFile(safePath, 'utf-8');
 
-            // 处理转义字符
-            const targetOld = unescapeContent(old_string);
-            const targetNew = unescapeContent(new_string);
+            // 直接使用原始字符串，移除 unescapeContent
+            const targetOld = old_string;
+            const targetNew = new_string;
 
             // 检查 old_string 是否存在
             if (!content.includes(targetOld)) {
@@ -1236,10 +1235,8 @@ const handlers = {
                 await fs.promises.mkdir(dir, { recursive: true });
             }
 
-            // 处理转义字符
-            const processedContent = unescapeContent(content);
-
-            await fs.promises.writeFile(safePath, processedContent, 'utf-8');
+            // 直接写入原始 content
+            await fs.promises.writeFile(safePath, content, 'utf-8');
             return `Successfully wrote to ${safePath}`;
         } catch (e) {
             return `Write failed: ${e.message}`;
@@ -1268,10 +1265,8 @@ const handlers = {
 
             regex.lastIndex = 0;
 
-            // 处理 replacement 中的转义字符
-            const processedReplacement = unescapeContent(replacement);
-
-            const newContent = content.replace(regex, processedReplacement);
+            // 直接使用原始 replacement
+            const newContent = content.replace(regex, replacement);
 
             if (newContent === content) {
                 return `Warning: Pattern matched but content remained identical after replacement.`;
@@ -1285,7 +1280,7 @@ const handlers = {
         }
     },
 
-    // 7. Insert Content (Dual Mode: Line or Anchor)
+    // 7. Insert Content
     insert_content: async ({ file_path, content, line_number, anchor_pattern, direction = 'after' }) => {
         try {
             const safePath = resolvePath(file_path);
@@ -1294,22 +1289,19 @@ const handlers = {
 
             let fileContent = await fs.promises.readFile(safePath, 'utf-8');
             
-            // 处理要插入内容的转义字符
-            const processedContent = unescapeContent(content);
+            // 直接使用原始 content
+            const processedContent = content;
 
-            // --- 模式 A: 基于行号 (高风险，需精确) ---
+            // --- 模式 A: 基于行号 ---
             if (line_number !== undefined && line_number !== null) {
                 const lines = fileContent.split(/\r?\n/);
-                const targetIndex = parseInt(line_number) - 1; // 转为 0-based
+                const targetIndex = parseInt(line_number) - 1; 
 
                 if (isNaN(targetIndex) || targetIndex < 0 || targetIndex > lines.length) {
                     return `Error: Line number ${line_number} is out of bounds (File has ${lines.length} lines).`;
                 }
 
-                // 处理插入位置
                 const insertPos = direction === 'before' ? targetIndex : targetIndex + 1;
-
-                // 将新内容按行拆分插入，保持数组结构
                 const contentLines = processedContent.split(/\r?\n/);
                 lines.splice(insertPos, 0, ...contentLines);
 
@@ -1317,11 +1309,10 @@ const handlers = {
                 return `Successfully inserted content at line ${line_number} in ${path.basename(safePath)}.`;
             }
 
-            // --- 模式 B: 基于正则锚点 (推荐) ---
+            // --- 模式 B: 基于正则锚点 ---
             if (anchor_pattern) {
                 let regex;
                 try {
-                    // 使用多行模式 'm'，以便 ^$ 匹配行
                     regex = new RegExp(anchor_pattern, 'm');
                 } catch (e) { return `Invalid Anchor Regex: ${e.message}`; }
 
@@ -1329,9 +1320,7 @@ const handlers = {
                     return `Error: Anchor pattern '${anchor_pattern}' not found in file.`;
                 }
 
-                // 使用回调函数替换，防止插入内容中的 $ 被误解析
                 const newFullContent = fileContent.replace(regex, (matchedStr) => {
-                    // 确保插入内容前后有换行符，避免粘连
                     if (direction === 'before') {
                         return `${processedContent}\n${matchedStr}`;
                     } else {
@@ -1349,7 +1338,6 @@ const handlers = {
             return `Insert error: ${e.message}`;
         }
     },
-
     // Bash / PowerShell
     execute_bash_command: async ({ command, timeout = 15000 }, context, signal) => {
         return new Promise((resolve) => {
@@ -1360,7 +1348,7 @@ const handlers = {
                 /(^|[;&|\s])rm\s+(-rf|-r|-f)\s+\/($|[;&|\s])/i, // rm -rf / (防止误删根目录)
                 />\s*\/dev\/sd/i,     // 写入设备
                 /\bmkfs\b/i,          // mkfs 格式化
-                /\bdd\s+/i,           // dd (使用单词边界，修复 pnpm add 误判)
+                /\bdd\s+/i,           // dd
                 /\bwget\s+/i,         // wget 下载
                 /\bcurl\s+.*\|\s*sh/i,// curl | sh 管道执行
                 /\bchmod\s+777/i,     // chmod 777
@@ -1373,7 +1361,10 @@ const handlers = {
 
             if (trimmedCmd.startsWith('cd ')) {
                 let targetDir = trimmedCmd.substring(3).trim();
-                targetDir = targetDir.replace(/^["']|["']$/g, '');
+                // 简单的去引号处理
+                if ((targetDir.startsWith('"') && targetDir.endsWith('"')) || (targetDir.startsWith("'") && targetDir.endsWith("'"))) {
+                    targetDir = targetDir.substring(1, targetDir.length - 1);
+                }
                 try {
                     const newPath = path.resolve(bashCwd, targetDir);
                     if (fs.existsSync(newPath) && fs.statSync(newPath).isDirectory()) {
@@ -1389,10 +1380,9 @@ const handlers = {
 
             const validTimeout = (typeof timeout === 'number' && timeout > 0) ? timeout : 15000;
 
-            // [修改] encoding 设置为 buffer，手动处理解码以支持多语言
             let shellOptions = {
                 cwd: bashCwd,
-                encoding: 'buffer',
+                encoding: 'buffer', // 关键：使用 buffer 以便手动解码
                 maxBuffer: 1024 * 1024 * 10,
                 timeout: validTimeout
             };
@@ -1403,9 +1393,7 @@ const handlers = {
             if (isWin) {
                 shellToUse = 'powershell.exe';
                 // Windows 编码配置
-                // 1. [Console]::OutputEncoding: 确保 Node.js 拿到的 stdout 是 UTF-8
-                // 2. $OutputEncoding: 确保管道符 | 传递的是 UTF-8
-                // 3. $PSDefaultParameterValues: 确保 >> (Out-File/Add-Content) 写入文件时使用 UTF-8 (无BOM)，解决截图中的 NUL 问题
+                // 注意：语法错误会导致这部分代码不执行，因此后续解码逻辑需要兼容 GBK
                 const preamble = `
                     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
                     $OutputEncoding = [System.Text.Encoding]::UTF8;
@@ -1421,16 +1409,27 @@ const handlers = {
 
             // 保存子进程引用
             const child = exec(finalCommand, shellOptions, (error, stdout, stderr) => {
-                // 解码辅助函数
+                // 解码辅助函数：增强版，支持 Windows GBK 回退
                 const decodeBuffer = (buf) => {
                     if (!buf || buf.length === 0) return "";
-                    try {
-                        // 优先尝试 UTF-8 解码
-                        return new TextDecoder('utf-8').decode(buf);
-                    } catch (e) {
-                        // 兜底直接转字符串
-                        return buf.toString();
+                    
+                    // 1. 尝试 UTF-8
+                    const utf8Decoder = new TextDecoder('utf-8', { fatal: false });
+                    const utf8Str = utf8Decoder.decode(buf);
+
+                    // 2. 如果在 Windows 上，且 UTF-8 解码出现了大量替换字符()，或者 stderr 报错（解析错误通常是系统默认编码 GBK），尝试 GBK
+                    if (isWin && (utf8Str.includes('') || error)) {
+                        try {
+                            // Node.js 的 TextDecoder 支持 gbk (依赖系统 ICU，Electron 环境通常支持)
+                            const gbkDecoder = new TextDecoder('gbk', { fatal: false });
+                            const gbkStr = gbkDecoder.decode(buf);
+                            // 简单的启发式判断：如果 GBK 解码结果看起来更正常（这里简单返回 GBK 结果）
+                            return gbkStr;
+                        } catch (e) {
+                            return utf8Str; // 不支持 gbk 则回退
+                        }
                     }
+                    return utf8Str;
                 };
 
                 let result = "";
@@ -1447,7 +1446,8 @@ const handlers = {
                         result += `\n[System Note]: Command was aborted by user.`;
                     } else {
                         result += `\n[Error Code]: ${error.code}`;
-                        if (error.message && !errStr) result += `\n[Message]: ${error.message}`;
+                        // 避免重复显示 message，因为 message 通常包含 stderr
+                        if (error.message && !errStr && !outStr) result += `\n[Message]: ${error.message}`;
                     }
                 }
 

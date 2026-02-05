@@ -2,7 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch, h, computed, defineAsyncComponent } from 'vue';
 import { ElContainer, ElMain, ElDialog, ElImageViewer, ElMessage, ElMessageBox, ElInput, ElButton, ElCheckbox, ElButtonGroup, ElTag, ElTooltip, ElIcon, ElAvatar, ElSwitch } from 'element-plus';
 import { createClient } from "webdav/web";
-import { DocumentCopy, QuestionFilled, Download, Search, Tools, CaretRight, Collection, Warning, Cpu } from '@element-plus/icons-vue';
+import { DocumentCopy, QuestionFilled, Download, Search, Tools, CaretRight, Collection, Warning, Cpu, Top, Bottom, ArrowUp, ArrowDown } from '@element-plus/icons-vue';
 
 import TitleBar from './components/TitleBar.vue';
 import ChatHeader from './components/ChatHeader.vue';
@@ -2035,20 +2035,24 @@ const saveSessionAsJson = async () => {
           const finalFilename = finalBasename + '.json';
           instance.confirmButtonLoading = true;
           try {
-            let fullDefaultPath = finalFilename;
             const localChatPath = currentConfig.value.webdav?.localChatPath;
+            
+            // 优化逻辑：如果有本地路径，直接写入；否则弹出保存框
             if (localChatPath) {
-              const separator = basic_msg.value.os === 'win' ? '\\' : '/';
-              fullDefaultPath = `${localChatPath}${separator}${finalFilename}`;
+              const separator = currentOS.value === 'win' ? '\\' : '/';
+              const fullPath = `${localChatPath}${separator}${finalFilename}`;
+              // 直接写入文件，不弹窗
+              await window.api.writeLocalFile(fullPath, jsonString);
+            } else {
+              // 未配置路径，弹出系统选择框
+              await window.api.saveFile({
+                title: '保存聊天会话',
+                defaultPath: finalFilename,
+                buttonLabel: '保存',
+                filters: [{ name: 'JSON 文件', extensions: ['json'] }, { name: '所有文件', extensions: ['*'] }],
+                fileContent: jsonString
+              });
             }
-
-            await window.api.saveFile({
-              title: '保存聊天会话',
-              defaultPath: fullDefaultPath,
-              buttonLabel: '保存',
-              filters: [{ name: 'JSON 文件', extensions: ['json'] }, { name: '所有文件', extensions: ['*'] }],
-              fileContent: jsonString
-            });
 
             defaultConversationName.value = finalBasename;
             showDismissibleMessage.success('会话已成功保存！');
@@ -2744,7 +2748,7 @@ const askAI = async (forceSend = false) => {
       // --- 构建工具列表 (MCP + Skill) ---
       let activeTools = [...openaiFormattedTools.value];
 
-      // [新增] 注入 Skill 工具定义
+      // 注入 Skill 工具定义
       if (sessionSkillIds.value.length > 0 && currentConfig.value.skillPath) {
         try {
           const skillToolDef = await window.api.getSkillToolDefinition(currentConfig.value.skillPath, sessionSkillIds.value);
@@ -2786,6 +2790,7 @@ const askAI = async (forceSend = false) => {
 
         let aggregatedReasoningContent = "";
         let aggregatedContent = "";
+        let aggregatedMedia = []; // 用于收集非文本内容（如 image_url）
         let aggregatedToolCalls = [];
         let aggregatedExtraContent = null;
         let lastUpdateTime = Date.now();
@@ -2815,14 +2820,34 @@ const askAI = async (forceSend = false) => {
               lastUpdateTime = Date.now();
             }
           }
+          
+          // 处理 content (支持 string 和 array)
           if (delta.content) {
-            aggregatedContent += delta.content;
+            if (typeof delta.content === 'string') {
+              aggregatedContent += delta.content;
+            } else if (Array.isArray(delta.content)) {
+              // 遍历数组处理多模态内容
+              delta.content.forEach(item => {
+                if (item.type === 'text') {
+                  aggregatedContent += (item.text || '');
+                } else if (item.type === 'image_url') {
+                  aggregatedMedia.push(item);
+                }
+                // 这里可以扩展其他类型
+              });
+            }
+
             if (chat_show.value[currentAssistantChatShowIndex].status == 'thinking') {
               chat_show.value[currentAssistantChatShowIndex].status = 'end';
             }
 
             if (Date.now() - lastUpdateTime > 100) {
-              chat_show.value[currentAssistantChatShowIndex].content = [{ type: 'text', text: aggregatedContent }];
+              // 构建混合内容数组
+              const currentDisplayContent = [];
+              if (aggregatedContent) currentDisplayContent.push({ type: 'text', text: aggregatedContent });
+              if (aggregatedMedia.length > 0) currentDisplayContent.push(...aggregatedMedia);
+              
+              chat_show.value[currentAssistantChatShowIndex].content = currentDisplayContent;
               lastUpdateTime = Date.now();
             }
           }
@@ -2845,9 +2870,19 @@ const askAI = async (forceSend = false) => {
           }
         }
 
+        // 构建最终历史消息内容
+        let finalContentForHistory = null;
+        if (aggregatedMedia.length > 0) {
+            finalContentForHistory = [];
+            if (aggregatedContent) finalContentForHistory.push({ type: 'text', text: aggregatedContent });
+            finalContentForHistory.push(...aggregatedMedia);
+        } else {
+            finalContentForHistory = aggregatedContent || null;
+        }
+
         responseMessage = {
           role: 'assistant',
-          content: aggregatedContent || null,
+          content: finalContentForHistory,
           reasoning_content: aggregatedReasoningContent || null,
           extra_content: aggregatedExtraContent
         };
@@ -2871,9 +2906,15 @@ const askAI = async (forceSend = false) => {
       history.value.push(responseMessage);
 
       const currentBubble = chat_show.value[currentAssistantChatShowIndex];
+      // 处理最终显示内容
       if (responseMessage.content) {
-        currentBubble.content = [{ type: 'text', text: responseMessage.content }];
+        if (typeof responseMessage.content === 'string') {
+            currentBubble.content = [{ type: 'text', text: responseMessage.content }];
+        } else if (Array.isArray(responseMessage.content)) {
+            currentBubble.content = responseMessage.content;
+        }
       }
+      
       if (responseMessage.reasoning_content) {
         currentBubble.reasoning_content = responseMessage.reasoning_content;
         currentBubble.status = 'end';
@@ -2930,17 +2971,13 @@ const askAI = async (forceSend = false) => {
 
               // 区分 Skill 调用和普通 MCP 调用
               if (toolCall.function.name === 'Skill') {
-                // 调用 Skill
                 if (uiToolCall) uiToolCall.result = `Activating skill: ${toolArgs.skill}...`;
 
-                // 1. 构建上下文 (复用 sub_agent 的逻辑)
-                // 注意：需要确保 activeTools 变量在当前作用域可用 (askAI 函数内部已有)
                 let executionContext = null;
                 const currentApiKey = api_key.value;
                 const currentBaseUrl = base_url.value;
                 const currentModelName = model.value.split('|')[1] || model.value;
 
-                // 定义实时日志回调
                 const onUpdateCallback = (logContent) => {
                   if (uiToolCall) {
                     uiToolCall.result = logContent + "\n\n[Skill (Sub-Agent) Running...]";
@@ -2951,28 +2988,22 @@ const askAI = async (forceSend = false) => {
                   apiKey: currentApiKey,
                   baseUrl: currentBaseUrl,
                   model: currentModelName,
-                  // 传入所有可用工具，Skill 内部会根据配置进行过滤
                   tools: activeTools.filter(t => t.function.name !== 'sub_agent'),
-                  mcpSystemPrompt: mcpSystemPromptStr, // 确保 mcpSystemPromptStr 变量在作用域内
+                  mcpSystemPrompt: mcpSystemPromptStr, 
                   onUpdate: onUpdateCallback
                 };
 
-                // 2. 调用 API，传入完整参数对象和上下文
-                // toolArgs 现在是完整的 JSON 对象 (包含 args, context, planning_level 等)
                 toolContent = await window.api.resolveSkillInvocation(
                   currentConfig.value.skillPath,
                   toolArgs.skill,
-                  toolArgs, // 传入整个对象
+                  toolArgs, 
                   executionContext,
                   toolCallControllers.value.get(toolCall.id)?.signal || signalController.value.signal
                 );
 
-                // 3. 处理结果显示
                 if (uiToolCall) {
-                  // 检查返回内容是否包含特定标记，判断是普通指令还是子智能体结果
                   if (toolContent.includes("[Sub-Agent]")) {
                     const currentLog = uiToolCall.result ? uiToolCall.result.replace("\n\n[Skill (Sub-Agent) Running...]", "") : "";
-                    // 避免重复追加
                     if (!currentLog.includes(toolContent)) {
                       uiToolCall.result = `${currentLog}\n\n=== Skill Execution Result ===\n${toolContent}`;
                     } else {
@@ -2984,7 +3015,6 @@ const askAI = async (forceSend = false) => {
                 }
 
               } else {
-                // 原有 MCP 调用逻辑
                 let executionContext = null;
 
                 if (toolCall.function.name === 'sub_agent') {
@@ -2992,17 +3022,14 @@ const askAI = async (forceSend = false) => {
                   const currentBaseUrl = base_url.value;
                   const currentModelName = model.value.split('|')[1] || model.value;
 
-                  // 1. 获取全量工具列表 (排除 sub_agent 自身)
                   const toolsContext = activeTools.filter(t => t.function.name !== 'sub_agent');
 
-                  // 2. 定义实时更新回调
                   const onUpdateCallback = (logContent) => {
                     if (uiToolCall) {
                       uiToolCall.result = logContent + "\n\n[Sub-Agent 执行中...]";
                     }
                   };
 
-                  // 3. 组装上下文
                   executionContext = {
                     apiKey: currentApiKey,
                     baseUrl: currentBaseUrl,
@@ -3013,7 +3040,6 @@ const askAI = async (forceSend = false) => {
                   };
                 }
 
-                // 执行 MCP 工具
                 const result = await window.api.invokeMcpTool(
                   toolCall.function.name,
                   toolArgs,
@@ -3442,6 +3468,68 @@ const handleOpenSearch = () => {
     textSearchInstance.show();
   }
 };
+
+const navMessages = computed(() => {
+  return chat_show.value
+    .map((msg, index) => ({ ...msg, originalIndex: index })) // 保留原始索引用于跳转
+    .filter(msg => msg.role !== 'system');
+});
+
+
+
+const getMessagePreviewText = (message) => {
+  let text = '';
+  
+  // 1. 尝试获取文本内容
+  if (typeof message.content === 'string') {
+    text = message.content;
+  } else if (Array.isArray(message.content)) {
+    const textPart = message.content.find(p => p.type === 'text' && p.text && p.text.trim());
+    if (textPart) {
+      text = textPart.text;
+    } else {
+      // 2. 如果没有文本，查找附件/图片
+      const filePart = message.content.find(p => p.type === 'file' || p.type === 'input_file');
+      const imgPart = message.content.find(p => p.type === 'image_url');
+      const audioPart = message.content.find(p => p.type === 'input_audio');
+      
+      if (filePart) {
+        // 优先显示文件名
+        text = `[文件] ${filePart.filename || filePart.name || '未知文件'}`;
+      } else if (imgPart) {
+        text = '[图片]';
+      } else if (audioPart) {
+        text = '[语音消息]';
+      }
+    }
+  }
+
+  // 3. 如果还是空的，检查工具调用
+  if (!text && message.tool_calls && message.tool_calls.length > 0) {
+    const toolNames = message.tool_calls.map(t => t.name).join(', ');
+    text = `调用工具: ${toolNames}`;
+  }
+  
+  // 4. AI 思考中状态
+  if (!text && message.role === 'assistant' && message.status === 'thinking') {
+    text = '思考中...';
+  }
+
+  // 5. 兜底
+  if (!text) text = message.role === 'user' ? '用户消息' : 'AI 回复';
+
+  // 截断，防止太长
+  return text.slice(0, 30) + (text.length > 30 ? '...' : '');
+};
+
+// 2. 滚动到指定消息
+const scrollToMessageByIndex = (index) => {
+  const component = getMessageComponentByIndex(index);
+  if (component && component.$el && component.$el.nodeType === 1) {
+    component.$el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    focusedMessageIndex.value = index;
+  }
+};
 </script>
 
 <template>
@@ -3477,55 +3565,74 @@ const handleOpenSearch = () => {
             @edit-message="handleEditMessage" @cancel-tool-call="handleCancelToolCall" />
         </el-main>
 
-        <div v-if="showScrollToBottomButton" class="scroll-to-bottom-wrapper">
-          <!-- 1. 回到顶部按钮 -->
-          <el-tooltip content="回到顶部" placement="left" :show-after="500">
-            <el-button class="scroll-nav-btn" @click="scrollToTop">
-              <el-icon :size="14">
-                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-                  <path
-                    d="M492.367 74.709h46.406L960 503.076l-46.406 46.406-403.379-403.378-399.809 403.378L64 503.076 492.367 74.709z m0 399.809h46.406L960 902.884l-46.406 46.406-403.379-399.808-399.809 399.809L64 902.884l428.367-428.366z">
-                  </path>
-                </svg>
-              </el-icon>
-            </el-button>
-          </el-tooltip>
+        <div class="unified-nav-sidebar" v-if="chat_show.length > 0">
+          
+          <!-- 上部控制区 -->
+          <div class="nav-group top">
+            <el-tooltip content="回到顶部" placement="left" :show-after="500">
+              <div class="nav-mini-btn" @click="scrollToTop">
+                <el-icon :size="16">
+                  <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                    <path d="M199.36 572.768a31.904 31.904 0 0 0 22.624-9.376l294.144-294.144 285.728 285.728a31.968 31.968 0 1 0 45.248-45.248L538.752 201.376a32 32 0 0 0-45.28 0L176.704 518.144a31.968 31.968 0 0 0 22.656 54.624z m339.424-115.392a32 32 0 0 0-45.28 0L176.736 774.144a31.968 31.968 0 1 0 45.248 45.248l294.144-294.144 285.728 285.728a31.968 31.968 0 1 0 45.248-45.248l-308.32-308.352z"></path>
+                  </svg>
+                </el-icon>
+              </div>
+            </el-tooltip>
+            <el-tooltip content="上一条消息" placement="left" :show-after="500">
+              <div class="nav-mini-btn" @click="navigateToPreviousMessage">
+                <el-icon><ArrowUp /></el-icon>
+              </div>
+            </el-tooltip>
+          </div>
 
-          <!-- 2. 上一条消息 -->
-          <el-tooltip content="上一条消息" placement="left" :show-after="500">
-            <el-button class="scroll-nav-btn" @click="navigateToPreviousMessage">
-              <el-icon :size="14">
-                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-                  <path d="M902.5 749.2l57.5-57.5-421.6-416.9h-52.7L64 691.7l57.5 57.5 388.1-392.9 392.9 392.9z"></path>
-                </svg>
-              </el-icon>
-            </el-button>
-          </el-tooltip>
+          <div class="nav-timeline-area">
+            <div class="timeline-track"></div>
+            <div class="timeline-scroller no-scrollbar">
+              <div 
+                v-for="msg in navMessages" 
+                :key="msg.id"
+                class="timeline-node-wrapper"
+                @click="scrollToMessageByIndex(msg.originalIndex)"
+              >
+                <el-tooltip 
+                  :content="getMessagePreviewText(msg)" 
+                  placement="left" 
+                  :show-after="200"
+                  :enterable="false"
+                  effect="dark"
+                >
+                  <div class="timeline-node" 
+                       :class="[
+                         msg.role, 
+                         { 'active': focusedMessageIndex === msg.originalIndex }
+                       ]">
+                  </div>
+                </el-tooltip>
+              </div>
+            </div>
+          </div>
 
-          <!-- 3. 下一条消息 -->
-          <el-tooltip :content="nextButtonTooltip" placement="left" :show-after="500">
-            <el-button class="scroll-nav-btn" @click="navigateToNextMessage">
-              <el-icon :size="14">
-                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-                  <path d="M121.5 274.8L64 332.3l421.6 416.9h52.7l421.6-416.9-57.5-57.5-388.1 392.9-392.8-392.9z">
-                  </path>
-                </svg>
-              </el-icon>
-            </el-button>
-          </el-tooltip>
+          <!-- 下部控制区 -->
+          <div class="nav-group bottom">
+            <el-tooltip :content="nextButtonTooltip" placement="left" :show-after="500">
+              <div class="nav-mini-btn" @click="navigateToNextMessage">
+                <el-icon><ArrowDown /></el-icon>
+              </div>
+            </el-tooltip>
+            
+            <el-tooltip content="跳到底部" placement="left" :show-after="500">
+              <div class="nav-mini-btn" 
+                   :class="{ 'highlight-bottom': showScrollToBottomButton }" 
+                   @click="forceScrollToBottom">
+                <el-icon :size="16">
+                  <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                    <path d="M493.504 558.144a31.904 31.904 0 0 0 45.28 0l308.352-308.352a31.968 31.968 0 1 0-45.248-45.248L516.16 490.272 221.984 196.128a31.968 31.968 0 1 0-45.248 45.248l316.768 316.768z m308.384-97.568L516.16 746.304 222.016 452.16a31.968 31.968 0 1 0-45.248 45.248l316.768 316.768a31.904 31.904 0 0 0 45.28 0l308.352-308.352a32 32 0 1 0-45.28-45.248z"></path>
+                  </svg>
+                </el-icon>
+              </div>
+            </el-tooltip>
+          </div>
 
-          <!-- 4. 跳到底部按钮 -->
-          <el-tooltip content="跳到底部" placement="left" :show-after="500">
-            <el-button class="scroll-nav-btn" @click="forceScrollToBottom">
-              <el-icon :size="14">
-                <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-                  <path
-                    d="M535.203 545.912h-46.406L64 121.116l46.406-46.406 403.378 399.809 399.81-399.81L960 121.116 535.203 545.912z m0 403.379h-46.406L64 524.494l46.406-49.976 403.378 403.379 399.809-403.379L960 524.494 535.203 949.291z">
-                  </path>
-                </svg>
-              </el-icon>
-            </el-button>
-          </el-tooltip>
         </div>
 
         <ChatInput ref="chatInputRef" v-model:prompt="prompt" v-model:fileList="fileList"
@@ -4531,46 +4638,207 @@ html.dark .app-container {
   transform: translateZ(0);
 }
 
-.scroll-to-bottom-wrapper {
+.unified-nav-sidebar {
   position: absolute;
-  bottom: 110px;
-  right: 0.5%;
-  z-index: 20;
+  right: 12px;
+  top: 40%;
+  transform: translateY(-50%);
+  max-height: 60vh; 
+  width: 24px;
+  z-index: 90;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0px;
+  gap: 6px;
+  pointer-events: none;
 }
 
-.scroll-nav-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  box-shadow: var(--shadow-md);
-  color: var(--text-secondary);
+/* 上下控制按钮组 */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+  border-radius: 12px;
+  padding: 2px 0;
+  flex-shrink: 0;
+}
+
+.nav-mini-btn {
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  
+  color: #2c2c2c;
+  background-color: transparent !important;
+  border: none;
+  box-shadow: none;
+  
   transition: all 0.2s ease;
-  margin: 0px !important;
+  font-size: 14px; 
+  border-radius: 4px;
 
   &:hover {
-    background-color: var(--bg-tertiary);
-    color: var(--text-accent);
-    transform: scale(1.1);
+    color: #000;
+    background-color: transparent; 
+    transform: scale(1.2);
   }
 }
 
-html.dark .scroll-nav-btn {
-  background-color: var(--bg-tertiary);
-  border-color: var(--border-primary);
-  color: var(--text-primary);
+/* 中间时间轴区域 */
+.nav-timeline-area {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: hidden; 
+  flex-direction: column;
+  min-height: 0;   
+  pointer-events: auto;
+}
 
-  &:hover {
-    background-color: var(--bg-secondary);
+.timeline-track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background-color: var(--el-border-color-lighter);
+  transform: translateX(-1px);
+  z-index: -1;
+  border-radius: 2px;
+  opacity: 0.6;
+}
+
+.timeline-scroller {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  
+  &::-webkit-scrollbar { display: none; }
+  scrollbar-width: none;
+}
+
+/* 消息节点 */
+.timeline-node-wrapper {
+  width: 100%;
+  height: 8px; /* 减小高度，让横线更紧凑 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+
+  /* 增加悬浮热区高度 */
+  padding: 2px 0; 
+
+  &:hover .timeline-node {
+    transform: scaleX(1.5) scaleY(1.2); /* 横向拉长效果 */
+  }
+  
+  &:hover .node-tooltip {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    visibility: visible;
+  }
+}
+
+.timeline-node {
+  /* 变成短横线 */
+  width: 10px;
+  height: 3px; 
+  border-radius: 2px; /* 微圆角 */
+  
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: none; 
+  border: none;
+  opacity: 0.6; /* 默认半透明，不抢眼 */
+
+  &.user {
+    background-color: var(--el-color-primary);
+  }
+
+  &.assistant {
+    background-color: #000000; 
+  }
+
+  /* 当前聚焦的消息：高亮、变宽、完全不透明 */
+  &.active {
+    opacity: 1;
+    width: 16px; /* 激活时变长 */
+    box-shadow: 0 0 4px rgba(255,215,0,0.5);
+  }
+}
+
+/* 悬浮提示框 (Tooltip) */
+.node-tooltip {
+  position: absolute;
+  right: 28px; /* 点的左侧 */
+  top: 50%;
+  transform: translateY(-50%) translateX(10px) scale(0.9);
+  background-color: var(--el-color-black);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 100;
+}
+
+html.dark {
+  .nav-mini-btn {
+    background-color: #2c2c2c;
+    border-color: #4c4c4c;
+    color: #a3a6ad;
+    &:hover {
+      background-color: transparent;
+      color: #fff;
+    }
+    &.highlight-bottom {
+      background-color: rgba(64, 158, 255, 0.2);
+      color: #409eff;
+      border-color: #409eff;
+    }
+  }
+
+  /* 强制区分颜色 */
+  .timeline-node.user {
+    background-color: #409eff; /* 用户：强制蓝色 */
+    border-color: #409eff;
+  }
+
+  .timeline-node.assistant {
+    background-color: #ffffff; /* AI：强制纯白 */
+    border-color: #ffffff;
+  }
+  
+  .timeline-track {
+    background-color: #4c4c4c;
+  }
+
+  .node-tooltip {
+    background-color: #E5EAF3;
+    color: #000;
   }
 }
 
@@ -4725,8 +4993,6 @@ body .app-container.has-bg {
   background-color: rgba(255, 255, 255, 0.45) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  // border: 1px solid rgba(255, 255, 255, 0.5);
-  // box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
 }
 
 .app-container.has-bg :deep(.chat-input-area-vertical .el-textarea__inner) {
@@ -4735,8 +5001,6 @@ body .app-container.has-bg {
 
 html.dark .app-container.has-bg :deep(.chat-input-area-vertical) {
   background-color: rgba(30, 30, 30, 0.45) !important;
-  // border: 1px solid rgba(255, 255, 255, 0.1);
-  // box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
 }
 
 html.dark .app-container.has-bg :deep(.title-bar) {
