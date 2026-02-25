@@ -2,13 +2,58 @@
 import { ref, watch, nextTick, onMounted } from 'vue'
 import { useChat } from '../useChat'
 
-const { currentMessages, isLoading, selectedModel, models, sendMessage, stopGeneration, renderMarkdown, loadModels, setSelectedModel, currentConv } = useChat()
+const { currentMessages, currentConvId, isLoading, selectedModel, models, sendMessage, stopGeneration, renderMarkdown, loadModels, setSelectedModel, editMessage, regenerateMessage } = useChat()
 
 const inputText = ref('')
 const messagesRef = ref<HTMLElement>()
 const textareaRef = ref<HTMLTextAreaElement>()
+const fileInputRef = ref<HTMLInputElement>()
 const isMultiline = ref(false)
 const autoScroll = ref(true)
+const pendingImages = ref<string[]>([])
+const editingMsgId = ref('')
+const editingText = ref('')
+const isComposing = ref(false)
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleImageUpload(e: Event) {
+  const files = (e.target as HTMLInputElement).files
+  if (!files) return
+  for (const file of Array.from(files)) {
+    if (!file.type.startsWith('image/')) continue
+    pendingImages.value.push(await fileToBase64(file))
+  }
+  if (fileInputRef.value) fileInputRef.value.value = ''
+}
+
+function removeImage(index: number) {
+  pendingImages.value.splice(index, 1)
+}
+
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  // 同步收集所有图片文件（异步后 DataTransferItemList 会被清空）
+  const files: File[] = []
+  for (const item of Array.from(items)) {
+    if (!item.type.startsWith('image/')) continue
+    const file = item.getAsFile()
+    if (file) files.push(file)
+  }
+  if (!files.length) return
+  e.preventDefault()
+  for (const file of files) {
+    pendingImages.value.push(await fileToBase64(file))
+  }
+}
 
 function onUserScrollIntent(e: WheelEvent | TouchEvent) {
   if (e instanceof WheelEvent && e.deltaY < 0) {
@@ -55,10 +100,17 @@ watch(inputText, () => nextTick(autoResize))
 
 watch(currentMessages, scrollToBottom, { deep: true })
 
+watch(currentConvId, () => {
+  nextTick(() => textareaRef.value?.focus())
+})
+
 async function handleSend() {
-  if (!inputText.value.trim() || isLoading.value) return
+  const hasContent = inputText.value.trim() || pendingImages.value.length
+  if (!hasContent || isLoading.value) return
   const text = inputText.value
+  const images = pendingImages.value.length ? [...pendingImages.value] : undefined
   inputText.value = ''
+  pendingImages.value = []
   isMultiline.value = false
   autoScroll.value = true
   nextTick(() => {
@@ -66,11 +118,11 @@ async function handleSend() {
       textareaRef.value.style.height = 'auto'
     }
   })
-  await sendMessage(text)
+  await sendMessage(text, images)
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !isComposing.value) {
     e.preventDefault()
     handleSend()
   }
@@ -82,6 +134,33 @@ function getModelName(m: any): string {
 
 function getModelId(m: any): string {
   return m?.id || m
+}
+
+function copyMessage(content: string) {
+  window.ztools.copyText(content)
+}
+
+function handleEdit(msgId: string, content: string) {
+  editingMsgId.value = msgId
+  editingText.value = content
+  nextTick(() => {
+    const el = document.querySelector('.edit-textarea') as HTMLTextAreaElement
+    el?.focus()
+  })
+}
+
+function cancelEdit() {
+  editingMsgId.value = ''
+  editingText.value = ''
+}
+
+async function confirmEdit(msgId: string, images?: string[]) {
+  if (!editingText.value.trim() && !images?.length) return
+  const text = editingText.value
+  editingMsgId.value = ''
+  editingText.value = ''
+  autoScroll.value = true
+  await editMessage(msgId, text, images)
 }
 
 onMounted(() => {
@@ -98,15 +177,54 @@ onMounted(() => {
         <div>开始一段新对话吧</div>
       </div>
       <div v-for="msg in currentMessages" :key="msg.id" class="msg-row" :class="msg.role">
-        <div class="msg-bubble" :class="{ 'cursor-blink': isLoading && msg.role === 'assistant' && msg === currentMessages[currentMessages.length - 1] && !msg.content && !msg.reasoning }">
-          <div v-if="msg.role === 'user'">{{ msg.content }}</div>
-          <template v-else>
-            <details v-if="msg.reasoning" class="reasoning-block" :open="isLoading && msg === currentMessages[currentMessages.length - 1] && !msg.content">
-              <summary>思考过程</summary>
-              <div class="reasoning-content" v-html="renderMarkdown(msg.reasoning)"></div>
-            </details>
-            <div v-html="renderMarkdown(msg.content)"></div>
-          </template>
+        <div class="msg-wrapper">
+          <div class="msg-bubble" :class="{ 'cursor-blink': isLoading && msg.role === 'assistant' && msg === currentMessages[currentMessages.length - 1] && !msg.content && !msg.reasoning, 'is-editing': editingMsgId === msg.id }">
+            <div v-if="msg.role === 'user'">
+              <template v-if="editingMsgId === msg.id">
+                <textarea class="edit-textarea" v-model="editingText" rows="3" @keydown.ctrl.enter="confirmEdit(msg.id, msg.images)" @keydown.meta.enter="confirmEdit(msg.id, msg.images)" @keydown.esc="cancelEdit"></textarea>
+                <div class="edit-actions">
+                  <span class="edit-hint">Ctrl+Enter 确认 / Esc 取消</span>
+                  <button class="msg-action-btn" @click="cancelEdit" title="取消">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                  <button class="msg-action-btn" @click="confirmEdit(msg.id, msg.images)" title="确定">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                <div v-if="msg.images?.length" class="msg-images">
+                  <img v-for="(img, i) in msg.images" :key="i" :src="img" class="msg-img" />
+                </div>
+                <div v-if="msg.content">{{ msg.content }}</div>
+              </template>
+            </div>
+            <template v-else>
+              <details v-if="msg.reasoning" class="reasoning-block" :open="isLoading && msg === currentMessages[currentMessages.length - 1] && !msg.content">
+                <summary>思考过程</summary>
+                <div class="reasoning-content" v-html="renderMarkdown(msg.reasoning)"></div>
+              </details>
+              <div v-html="renderMarkdown(msg.content)"></div>
+            </template>
+          </div>
+          <div class="msg-actions">
+            <template v-if="msg.role === 'user'">
+              <button class="msg-action-btn" @click="handleEdit(msg.id, msg.content)" title="编辑">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+              <button class="msg-action-btn" @click="copyMessage(msg.content)" title="复制">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </template>
+            <template v-else-if="msg.content">
+              <button class="msg-action-btn" @click="regenerateMessage(msg.id)" title="重新生成" :disabled="isLoading">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              </button>
+              <button class="msg-action-btn" @click="copyMessage(msg.content)" title="复制">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -116,20 +234,33 @@ onMounted(() => {
       </select>
     </div>
     <div class="input-area">
+      <div v-if="pendingImages.length" class="image-preview-bar">
+        <div v-for="(img, i) in pendingImages" :key="i" class="preview-item">
+          <img :src="img" />
+          <button class="preview-remove" @click="removeImage(i)">&times;</button>
+        </div>
+      </div>
       <div class="input-wrapper" :class="{ multiline: isMultiline }">
         <textarea
           ref="textareaRef"
           v-model="inputText"
           @keydown="handleKeydown"
           @input="autoResize"
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+          @paste="handlePaste"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
+          placeholder="输入消息，Enter 发送，Shift+Enter 换行，可粘贴图片"
           rows="1"
         ></textarea>
         <div class="btn-row">
+          <input ref="fileInputRef" type="file" accept="image/*" multiple hidden @change="handleImageUpload" />
+          <button class="btn-attach" @click="fileInputRef?.click()" title="上传图片">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          </button>
           <button v-if="isLoading" class="btn-stop" @click="stopGeneration" title="停止生成">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
           </button>
-          <button v-else class="btn-send" @click="handleSend" :disabled="!inputText.trim()" title="发送">
+          <button v-else class="btn-send" @click="handleSend" :disabled="!inputText.trim() && !pendingImages.length" title="发送">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
@@ -168,8 +299,47 @@ onMounted(() => {
 }
 .msg-row.user { justify-content: flex-end; }
 .msg-row.assistant { justify-content: flex-start; }
-.msg-bubble {
+.msg-wrapper {
   max-width: 80%;
+  position: relative;
+}
+.msg-wrapper:has(.is-editing) {
+  max-width: 100%;
+  min-width: 80%;
+}
+.msg-wrapper:hover .msg-actions {
+  opacity: 1;
+}
+.msg-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding-top: 4px;
+}
+.msg-row.user .msg-actions { justify-content: flex-end; }
+.msg-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.msg-action-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.msg-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.msg-bubble {
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 13.5px;
@@ -321,5 +491,120 @@ onMounted(() => {
   color: var(--text);
   outline: none;
   max-width: 200px;
+}
+
+/* 消息中的图片 */
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.msg-img {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: 8px;
+  object-fit: cover;
+  cursor: pointer;
+}
+
+/* 图片预览栏 */
+.image-preview-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 4px;
+  overflow-x: auto;
+}
+.preview-item {
+  position: relative;
+  flex-shrink: 0;
+}
+.preview-item img {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+.preview-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--text-secondary);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.preview-remove:hover {
+  background: #e53e3e;
+}
+
+/* 上传按钮 */
+.btn-attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.btn-attach:hover {
+  color: var(--primary);
+}
+
+/* 就地编辑 */
+.edit-textarea {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 6px;
+  padding: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  min-height: 60px;
+  max-height: 200px;
+  box-sizing: border-box;
+}
+.edit-textarea:focus {
+  border-color: rgba(255,255,255,0.6);
+}
+.edit-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.edit-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  margin-right: auto;
+}
+.edit-actions .msg-action-btn {
+  border-color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.6);
+  background: transparent;
+}
+.edit-actions .msg-action-btn:hover {
+  border-color: rgba(255,255,255,0.6);
+  color: #fff;
 }
 </style>

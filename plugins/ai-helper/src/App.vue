@@ -56,6 +56,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: var(--bg);
 }
 .top-bar {
   padding: 8px 12px 0;

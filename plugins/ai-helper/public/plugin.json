@@ -4,7 +4,7 @@
   "title": "AI助手",
   "description": "轻量级 AI 聊天助手",
   "author": "Zing",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "index.html",
   "preload": "preload/services.js",
   "logo": "logo.png",
@@ -20,8 +20,15 @@
       "code": "chat",
       "explain": "AI 智能对话助手",
       "icon": "logo.png",
-      "mainHide": true,
-      "cmds": ["AI助手", "AI", "chat", { "type": "over", "label": "AI对话" }]
+      "cmds": [
+        "AI助手",
+        "AI",
+        "chat",
+        {
+          "type": "over",
+          "label": "AI对话"
+        }
+      ]
     }
   ]
 }
