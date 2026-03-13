@@ -125,6 +125,11 @@ const en = {
   settingsTitle: 'Settings',
   settingsClose: 'Close',
   displayLanguage: 'Display Language',
+
+  // Theme
+  themeSystem: 'System',
+  themeLight: 'Light',
+  themeDark: 'Dark',
 }
 
 export default en

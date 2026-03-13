@@ -8,7 +8,7 @@
 
 ### 文本对比
 
-![文本对比](images/文本对比.png)
+![文本对比](images/text-diff.png)
 
 - 支持代码与纯文本对比
 - 语法高亮（基于 Monaco Editor）
@@ -18,7 +18,7 @@
 
 ### 图片对比
 
-![图片对比](images/图片对比.png)
+![图片对比](images/image-diff.png)
 
 - 支持 PNG、JPG、JPEG、BMP、GIF、WebP 格式
 - 像素级差异检测（基于 Pixelmatch）
@@ -27,7 +27,7 @@
 
 ### Excel 对比
 
-![Excel对比](images/excel对比.png)
+![Excel对比](images/excel-diff.png)
 
 - 支持 .xlsx、.xls、.csv 格式
 - 表格级差异对比
@@ -36,7 +36,7 @@
 
 ### Word 对比
 
-![Word对比](images/word对比.png)
+![Word对比](images/word-diff.png)
 
 - 支持 .docx 格式
 - 段落级差异对比
@@ -45,7 +45,7 @@
 
 ### PDF 对比
 
-![PDF对比](images/PDF对比.png)
+![PDF对比](images/pdf-diff.png)
 
 - 支持 .pdf 格式
 - 文本内容提取与对比

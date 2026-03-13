@@ -85,7 +85,7 @@ const showSettings = ref(false)
             <div class="flex items-center gap-1.5 w-24 justify-end">
                 <!-- Theme toggle: system -> light -> dark -->
                 <ZTooltip position="bottom"
-                    :content="themeMode === 'system' ? (locale === 'zh' ? '跟随系统' : 'System') : themeMode === 'light' ? (locale === 'zh' ? '浅色模式' : 'Light') : (locale === 'zh' ? '深色模式' : 'Dark')">
+                    :content="themeMode === 'system' ? t('themeSystem') : themeMode === 'light' ? t('themeLight') : t('themeDark')">
                     <ZButton variant="surface" size="md" @click="cycleTheme" class="!w-10 !h-10 !p-0">
                         <ZIcon v-if="themeMode === 'system'" name="monitor" :size="18" />
                         <ZIcon v-else-if="themeMode === 'light'" name="sun" :size="18" />
@@ -93,7 +93,7 @@ const showSettings = ref(false)
                     </ZButton>
                 </ZTooltip>
                 <!-- Settings -->
-                <ZTooltip position="bottom" :content="locale === 'zh' ? '设置' : 'Settings'">
+                <ZTooltip position="bottom" :content="t('settings')">
                     <ZButton variant="surface" size="md" @click="showSettings = true" class="!w-10 !h-10 !p-0">
                         <ZIcon name="settings" :size="18" />
                     </ZButton>

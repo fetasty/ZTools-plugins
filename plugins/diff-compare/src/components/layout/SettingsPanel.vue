@@ -23,7 +23,8 @@ const emit = defineEmits(['close'])
  * 语言选项列表
  */
 const langOptions = ref([
-    { label: '中文', value: 'zh' },
+    { label: '简体中文', value: 'zh-CN' },
+    { label: '繁體中文', value: 'zh-TW' },
     { label: 'English', value: 'en' },
     { label: '日本語', value: 'ja' }
 ])

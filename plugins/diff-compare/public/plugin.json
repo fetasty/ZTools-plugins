@@ -4,7 +4,7 @@
   "title": "对比助手",
   "description": "多模态差异对比工具。支持文本代码、图片、Excel 表格、Word 文档及 PDF 文档的实时对比与差异高亮。",
   "author": "nichijoux",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.html",
   "preload": "preload/services.js",
   "logo": "logo.png",

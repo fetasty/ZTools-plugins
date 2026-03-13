@@ -125,6 +125,11 @@ const ja = {
   settingsTitle: '設定',
   settingsClose: '閉じる',
   displayLanguage: '表示言語',
+
+  // Theme
+  themeSystem: 'システム',
+  themeLight: 'ライト',
+  themeDark: 'ダーク',
 }
 
 export default ja
