@@ -7,6 +7,7 @@
     "list": [
       "ai-helper",
       "anywhere",
+      "bookmarks",
       "calculation-paper",
       "clipboard",
       "easy-translate",
@@ -45,10 +46,7 @@
     "title": "系统工具",
     "description": "系统级实用工具",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/system.png",
-    "list": [
-      "everything",
-      "mac-system-preference-ztools-plugin"
-    ]
+    "list": ["everything", "mac-system-preference-ztools-plugin"]
   },
   {
     "key": "media",
@@ -70,24 +68,14 @@
     "title": "文本处理",
     "description": "文本编辑与格式化工具",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/text.png",
-    "list": [
-      "ascll-art-font",
-      "goose-note",
-      "markdown"
-    ]
+    "list": ["ascll-art-font", "goose-note", "markdown"]
   },
   {
     "key": "game",
     "title": "游戏娱乐",
     "description": "休闲娱乐小游戏",
     "icon": "https://raw.githubusercontent.com/ZToolsCenter/ZTools-plugins/refs/heads/main/icons/game.png",
-    "list": [
-      "2048",
-      "fidget",
-      "flyfont",
-      "rogue-shooter",
-      "super-mario"
-    ]
+    "list": ["2048", "fidget", "flyfont", "rogue-shooter", "super-mario"]
   },
   {
     "key": "network",
