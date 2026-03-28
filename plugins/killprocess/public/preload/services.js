@@ -6,6 +6,11 @@ window.services = {
   // 结束进程
   killProcess(pid) {
     try {
+      // 验证 pid 是否为整数，防止命令注入
+      if (typeof pid !== 'number' || !Number.isInteger(pid)) {
+        return '结束进程失败: 进程 ID 必须为整数'
+      }
+
       // 根据不同操作系统执行不同的命令
       if (process.platform === 'win32') {
         execSync(`taskkill /F /PID ${pid}`)
