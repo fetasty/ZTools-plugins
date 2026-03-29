@@ -227,6 +227,18 @@
             color: var(--dynamic-color);
             letter-spacing: 2px;
             font-variant-numeric: tabular-nums;
+            display: flex;
+            align-items: baseline;
+        }
+
+        .next-code {
+            font-size: 16px;
+            opacity: 0.35;
+            margin-left: 12px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: var(--text-color);
+            font-variant-numeric: tabular-nums;
         }
 
         .timer-container {
@@ -289,6 +301,12 @@
         .settings-label {
             font-weight: 600;
             font-size: 15px;
+        }
+
+        .settings-select.disabled {
+            opacity: 0.4;
+            cursor: not-allowed !important;
+            pointer-events: none;
         }
 
         .settings-select {
@@ -623,7 +641,7 @@
                     :class="{ 
                         pinned: acc.pinned, 
                         dragging: isDragging && dragIndex === index, 
-                        'low-time': (acc.type || 'totp') === 'totp' && getAccountTimeLeft(acc) <= 5 
+                        'low-time': (acc.type || 'totp') !== 'hotp' && getAccountTimeLeft(acc) <= 5 
                     }"
                     :draggable="!acc.pinned" @dragstart="handleDragStart(index, $event)"
                     @dragover.prevent="handleDragOver(index, $event)" @dragend="handleDragEnd"
@@ -637,12 +655,15 @@
                             <div class="card-title">{{ acc.name }}</div>
                         </div>
                         <div class="code-display">
-                            <div class="code-text">{{ getFormattedToken(acc.id) }}</div>
+                            <div class="code-text">
+                                {{ getFormattedToken(acc.id) }}
+                                <span v-if="config.nextPreview" class="next-code">{{ getFormattedNextToken(acc.id) }}</span>
+                            </div>
                         </div>
                     </div>
 
                     <!-- 环形进度条/复制成功反馈/HOTP 刷新 -->
-                    <div class="timer-container" v-if="(config.timerStyle === 'circle' && (acc.type || 'totp') === 'totp') || copiedId === acc.id || (acc.type || 'totp') === 'hotp'">
+                    <div class="timer-container" v-if="(config.timerStyle === 'circle' && (acc.type || 'totp') !== 'hotp') || copiedId === acc.id || (acc.type || 'totp') === 'hotp'">
                         <transition name="modal-fade" mode="out-in">
                             <div :key="copiedId === acc.id ? 'check' : ((acc.type || 'totp') === 'hotp' ? 'refresh' : 'timer')">
                                 <svg v-if="copiedId === acc.id" width="40" height="40" viewBox="0 0 24 24" fill="none"
@@ -657,7 +678,7 @@
                                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
                                     </svg>
                                 </div>
-                                <svg v-else-if="(acc.type || 'totp') === 'totp'" width="40" height="40" viewBox="0 0 40 40">
+                                <svg v-else-if="(acc.type || 'totp') !== 'hotp'" width="40" height="40" viewBox="0 0 40 40">
                                     <circle cx="20" cy="20" r="18" fill="none" stroke="var(--border-color)"
                                         :stroke-width="4.5">
                                     </circle>
@@ -671,7 +692,7 @@
                     </div>
 
                     <!-- 条形进度条 -->
-                    <div class="progress-bar-container" v-if="config.timerStyle === 'bar' && (acc.type || 'totp') === 'totp'">
+                    <div class="progress-bar-container" v-if="config.timerStyle === 'bar' && (acc.type || 'totp') !== 'hotp'">
                         <div class="progress-bar" :style="{ width: (getAccountTimeLeft(acc) / (acc.period || 30) * 100) + '%' }"></div>
                     </div>
                 </div>
@@ -693,7 +714,7 @@
                                 stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="6 9 12 15 18 9"></polyline>
                             </svg>
-                            <div class="select-menu" v-if="showSelectMenu">
+                            <div class="select-menu up" v-if="showSelectMenu">
                                 <div class="select-item" :class="{active: config.timerStyle === 'circle'}"
                                     @click.stop="config.timerStyle = 'circle'; saveConfig(); showSelectMenu = false">
                                     <span>环形</span>
@@ -711,6 +732,28 @@
                                         stroke-linejoin="round">
                                         <polyline points="20 6 9 17 4 12"></polyline>
                                     </svg>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <span class="settings-label">下一个验证码预览</span>
+                        <div class="settings-select" :class="{ open: showNextSelectMenu }"
+                            @click.stop="showNextSelectMenu = !showNextSelectMenu">
+                            <span>{{ config.nextPreview ? '开启' : '关闭' }}</span>
+                            <svg class="arrow" xmlns="http://www.w3.org/2000/svg" width="12" height="12"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                            <div class="select-menu up" v-if="showNextSelectMenu">
+                                <div class="select-item" :class="{active: config.nextPreview}"
+                                    @click.stop="config.nextPreview = true; saveConfig(); showNextSelectMenu = false">
+                                    <span>开启</span>
+                                </div>
+                                <div class="select-item" :class="{active: !config.nextPreview}"
+                                    @click.stop="config.nextPreview = false; saveConfig(); showNextSelectMenu = false">
+                                    <span>关闭</span>
                                 </div>
                             </div>
                         </div>
@@ -773,14 +816,23 @@
                                             <polyline points="20 6 9 17 4 12"></polyline>
                                         </svg>
                                     </div>
+                                    <div class="select-item" :class="{active: modalForm.type === 'steam'}"
+                                        @click.stop="modalForm.type = 'steam'; activeModalDropdown = null">
+                                        <span>Steam 令牌</span>
+                                        <svg v-if="modalForm.type === 'steam'" width="12" height="12" viewBox="0 0 24 24"
+                                            fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <polyline points="20 6 9 17 4 12"></polyline>
+                                        </svg>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
                         <div class="form-item">
                             <label>算法</label>
-                            <div class="settings-select" :class="{ open: activeModalDropdown === 'algo' }"
-                                @click.stop="activeModalDropdown = activeModalDropdown === 'algo' ? null : 'algo'">
+                            <div class="settings-select" :class="{ open: activeModalDropdown === 'algo', disabled: modalForm.type === 'steam' }"
+                                @click.stop="modalForm.type !== 'steam' && (activeModalDropdown = activeModalDropdown === 'algo' ? null : 'algo')">
                                 <span>{{ modalForm.algorithm }}</span>
                                 <svg class="arrow" xmlns="http://www.w3.org/2000/svg" width="12" height="12"
                                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -805,8 +857,8 @@
                         <!-- 位数与 时间/计数 -->
                         <div class="form-item">
                             <label>位数</label>
-                            <div class="settings-select" :class="{ open: activeModalDropdown === 'digits' }"
-                                @click.stop="activeModalDropdown = activeModalDropdown === 'digits' ? null : 'digits'">
+                            <div class="settings-select" :class="{ open: activeModalDropdown === 'digits', disabled: modalForm.type === 'steam' }"
+                                @click.stop="modalForm.type !== 'steam' && (activeModalDropdown = activeModalDropdown === 'digits' ? null : 'digits')">
                                 <span>{{ modalForm.digits }}</span>
                                 <svg class="arrow" xmlns="http://www.w3.org/2000/svg" width="12" height="12"
                                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -829,12 +881,13 @@
                         </div>
 
                         <div class="form-item">
-                            <label v-if="modalForm.type === 'totp'">时间间隔</label>
-                            <label v-else>计数器</label>
+                            <label v-if="modalForm.type === 'totp' || modalForm.type === 'steam'">时间间隔</label>
+                            <label v-else-if="modalForm.type === 'hotp'">计数器</label>
+                            <label v-else>设置</label>
 
-                            <div v-if="modalForm.type === 'totp'" class="settings-select"
-                                :class="{ open: activeModalDropdown === 'period' }"
-                                @click.stop="activeModalDropdown = activeModalDropdown === 'period' ? null : 'period'">
+                            <div v-if="modalForm.type === 'totp' || modalForm.type === 'steam'" class="settings-select"
+                                :class="{ open: activeModalDropdown === 'period', disabled: modalForm.type === 'steam' }"
+                                @click.stop="modalForm.type !== 'steam' && (activeModalDropdown = activeModalDropdown === 'period' ? null : 'period')">
                                 <span>{{ modalForm.period }}s</span>
                                 <svg class="arrow" xmlns="http://www.w3.org/2000/svg" width="12" height="12"
                                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

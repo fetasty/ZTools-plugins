@@ -18,7 +18,7 @@
     }
 
     try {
-        const { createApp, ref, onMounted, onUnmounted, nextTick } = Vue;
+        const { createApp, ref, onMounted, onUnmounted, nextTick, watch } = Vue;
 
         // --- TOTP Algorithms (Pure JS) ---
         function SHA1(msg) {
@@ -140,19 +140,20 @@
             // 仅允许 A-Z 和 2-7
             return /^[A-Z2-7]+$/i.test(secret);
         }
-        function getOTP(acc) {
+        function getOTP(acc, isNext = false) {
             try {
                 const secret = acc.secret;
                 const type = acc.type || 'totp';
                 const algorithm = acc.algorithm || 'SHA1';
                 const digits = acc.digits || 6;
                 const period = acc.period || 30;
-                let counter = acc.counter || 0;
+                let counter = (acc.counter || 0) + (isNext && type === 'hotp' ? 1 : 0);
 
                 let msg = "";
-                if (type === 'totp') {
-                    const epoch = Math.round(new Date().getTime() / 1000.0);
-                    msg = Math.floor(epoch / period).toString(16).padStart(16, '0');
+                if (type === 'totp' || type === 'steam') {
+                    const step = (type === 'steam') ? 30 : period;
+                    const epoch = Math.round(new Date().getTime() / 1000.0) + (isNext ? step : 0);
+                    msg = Math.floor(epoch / step).toString(16).padStart(16, '0');
                 } else {
                     msg = counter.toString(16).padStart(16, '0');
                 }
@@ -162,14 +163,24 @@
                 const binMsg = hex2bin(msg);
                 
                 if (algorithm === 'SHA256') hmacResult = hmac_sha256(binSecret, binMsg);
-                else hmacResult = hmac_sha1(binSecret, binMsg); // SHA512 fallback to SHA1 for now or use crypto if available
+                else hmacResult = hmac_sha1(binSecret, binMsg);
 
                 const hmacBin = hex2bin(hmacResult);
                 const offset = hmacBin.charCodeAt(hmacBin.length - 1) & 0xf;
-                const binary = ((hmacBin.charCodeAt(offset) & 0x7f) << 24) |
+                let binary = ((hmacBin.charCodeAt(offset) & 0x7f) << 24) |
                              ((hmacBin.charCodeAt(offset + 1) & 0xff) << 16) |
                              ((hmacBin.charCodeAt(offset + 2) & 0xff) << 8) |
                              (hmacBin.charCodeAt(offset + 3) & 0xff);
+                
+                if (type === 'steam') {
+                    const alphabet = "23456789BCDFGHJKMNPQRTVWXY";
+                    let code = "";
+                    for (let i = 0; i < 5; i++) {
+                        code += alphabet.charAt(binary % 26);
+                        binary = Math.floor(binary / 26);
+                    }
+                    return code;
+                }
                 
                 let otp = (binary % Math.pow(10, digits)).toString();
                 return otp.padStart(digits, '0');
@@ -183,9 +194,13 @@
         const app = createApp({
             setup() {
                 const accounts = ref([]);
-                const config = ref({ timerStyle: 'circle' });
+                const config = ref({ 
+                    timerStyle: 'circle',
+                    nextPreview: false
+                });
                 
                 const showModal = ref(false);
+                const showNextSelectMenu = ref(false);
                 const showAbout = ref(false);
                 const showSettings = ref(false);
                 const showSelectMenu = ref(false);
@@ -196,9 +211,20 @@
                     type: 'totp', period: 30, counter: 1, 
                     algorithm: 'SHA1', digits: 6 
                 });
-                const activeModalDropdown = ref(null); // 'type', 'period', 'algorithm', 'digits'
+                const activeModalDropdown = ref(null);
                 const nameError = ref(false);
                 const secretError = ref(false);
+                
+                watch(() => modalForm.value.type, (newType, oldType) => {
+                    if (newType === 'steam') {
+                        modalForm.value.algorithm = 'SHA1';
+                        modalForm.value.digits = 5;
+                        modalForm.value.period = 30;
+                    } else if (oldType === 'steam') {
+                        // 从 steam 切回时重置为默认值
+                        modalForm.value.digits = 6;
+                    }
+                });
 
                 const menuVisible = ref(false);
                 const menuPos = ref({ x: 0, y: 0 });
@@ -208,6 +234,7 @@
                 const confirmData = ref({ name: '', id: '' });
 
                 const tokens = ref({});
+                const nextTokens = ref({});
                 const toastMsg = ref('');
                 const copiedId = ref(null);
                 const currentTime = ref(Math.round(new Date().getTime() / 1000.0));
@@ -258,10 +285,19 @@
                     timeLeft.value = 30 - (epoch % 30); 
                     
                     const newTokens = {};
+                    const newNextTokens = {};
                     accounts.value.forEach(acc => {
                         newTokens[acc.id] = getOTP(acc);
+                        newNextTokens[acc.id] = getOTP(acc, true);
                     });
                     tokens.value = newTokens;
+                    nextTokens.value = newNextTokens;
+                };
+
+                const getFormattedNextToken = (accId) => {
+                    const token = nextTokens.value[accId];
+                    if (!token || token === 'Error') return '------';
+                    return token.slice(0, 3) + ' ' + token.slice(3);
                 };
 
                 const getAccountTimeLeft = (acc) => {
@@ -309,7 +345,6 @@
                             if (item.pinned) {
                                 accounts.value.unshift(item);
                             } else {
-                                // 取消置顶：移动到所有置顶项之后的第一个位置
                                 const pinnedCount = getPinnedCount();
                                 accounts.value.splice(pinnedCount, 0, item);
                             }
@@ -325,8 +360,6 @@
                     }
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', index);
-                    
-                    // 异步隐藏原位，确保 ghost image 已生成
                     setTimeout(() => {
                         dragIndex.value = index;
                         isDragging.value = true;
@@ -339,7 +372,6 @@
 
                     const rect = e.currentTarget.getBoundingClientRect();
                     const nextMid = (rect.top + rect.bottom) / 2;
-                    // 阈值保护，防止抽搐
                     if (e.clientY < nextMid && dragIndex.value < index) return; 
                     if (e.clientY > nextMid && dragIndex.value > index) return;
 
@@ -384,7 +416,6 @@
                     }
                     if (!name || !secret || secret === '密钥不合法') return;
 
-                    // 校验 Base32 合法性
                     if (!base32Validate(secret)) {
                         secretError.value = true;
                         setTimeout(() => {
@@ -430,17 +461,14 @@
                     if (code && code !== 'Error') {
                         if (window.ztools) {
                             if (e && e.shiftKey) {
-                                // 仅复制
                                 window.ztools.copyText(code);
                             } else {
-                                // 自动输入并关闭
                                 window.ztools.hideMainWindowTypeString(code);
                                 window.ztools.copyText(code);
                             }
                         }
                         copiedId.value = acc.id;
                         
-                        // HOTP 自动自增逻辑
                         if (acc.type === 'hotp') {
                             acc.counter = (acc.counter || 0) + 1;
                             saveAccounts();
@@ -451,10 +479,6 @@
                             if (copiedId.value === acc.id) copiedId.value = null;
                         }, 2000);
                     }
-                };
-                const showToast = (msg) => {
-                    toastMsg.value = msg;
-                    setTimeout(() => { toastMsg.value = ''; }, 2000);
                 };
                 const getFormattedToken = (id) => {
                     const t = tokens.value[id] || '......';
@@ -479,15 +503,15 @@
                 });
 
                 return { 
-                    accounts, config, toastMsg, timeLeft, tokens, copiedId,
-                    showModal, modalTitle, modalForm, nameInput, showAbout, showSettings, showSelectMenu,
-                    activeModalDropdown,
+                    accounts, config, toastMsg, timeLeft, tokens, nextTokens, copiedId,
+                    showModal, modalTitle, modalForm, nameInput, showAbout, showSettings, showSelectMenu, showNextSelectMenu,
+                    activeModalDropdown, currentTime,
+                    saveConfig, saveAccounts,
                     nameError, secretError,
-                    showConfirm, confirmData, confirmDelete,
                     menuVisible, menuPos, menuContext,
-                    openAddModal, handleModalSubmit, saveConfig,
+                    confirmDelete, showConfirm, confirmData, openAddModal, handleModalSubmit,
                     showContextMenu, hideContextMenu, handleAction,
-                    copyCode, getFormattedToken, openExternal,
+                    copyCode, getFormattedToken, getFormattedNextToken, openExternal,
                     handleDragStart, handleDragOver, handleDragEnd, handleDrop,
                     dragIndex, isDragging, getAccountTimeLeft, refreshHOTP,
                     currentTime
