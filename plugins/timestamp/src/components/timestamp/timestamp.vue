@@ -16,6 +16,9 @@ const formatDateTime = (date: Date) => {
 
 const inputValue = ref(props.launchParam.payload || new Date().getTime().toString())
 
+// 其它时区面板显示状态
+const showOtherTimezones = ref(false)
+
 // 复制到剪贴板
 const copyToClipboard = async (text: string) => {
   if (text === '-') return
@@ -72,6 +75,27 @@ const utcTime = computed(() => {
   if (!parsedDate.value) return '-'
   return parsedDate.value.toISOString().replace('T', ' ').substring(0, 19)
 })
+
+// 根据偏移量计算时区时间
+const getTimezoneTime = (offsetMinutes: number) => {
+  if (!parsedDate.value) return '-'
+  // 获取 UTC 时间组件
+  const utcYear = parsedDate.value.getUTCFullYear()
+  const utcMonth = parsedDate.value.getUTCMonth()
+  const utcDate = parsedDate.value.getUTCDate()
+  const utcHours = parsedDate.value.getUTCHours()
+  const utcMinutes = parsedDate.value.getUTCMinutes()
+  const utcSeconds = parsedDate.value.getUTCSeconds()
+
+  // 创建 UTC 时间并应用偏移
+  const utcMs = Date.UTC(utcYear, utcMonth, utcDate, utcHours, utcMinutes, utcSeconds)
+  const timezoneMs = utcMs + offsetMinutes * 60 * 1000
+  const timezoneDate = new Date(timezoneMs)
+
+  // 手动格式化，避免使用本地时区
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${timezoneDate.getUTCFullYear()}-${pad(timezoneDate.getUTCMonth() + 1)}-${pad(timezoneDate.getUTCDate())} ${pad(timezoneDate.getUTCHours())}:${pad(timezoneDate.getUTCMinutes())}:${pad(timezoneDate.getUTCSeconds())}`
+}
 
 // 快捷键复制
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -190,6 +214,7 @@ onUnmounted(() => {
       <div class="p-4 border-t bg-gray-50 text-right">
         <button
           class="inline-flex items-center text-sm text-gray-600 hover:text-gray-800 cursor-pointer"
+          @click="showOtherTimezones = !showOtherTimezones"
         >
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -210,101 +235,101 @@ onUnmounted(() => {
       </div>
 
       <!-- 其它时区 -->
-      <div class="hidden border-t">
+      <div :class="showOtherTimezones ? 'border-t' : 'hidden border-t'">
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-12:00 贝克岛时间(BIT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-720">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-720) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-11:00 萨摩亚标准时间(SST)、纽埃时间(NUT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-660">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-660) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-10:00 夏威夷-阿留申标准时间(HST)、塔希提时间(TAHT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-600">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-600) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-9:30 马克萨斯群岛时间(MART)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-570">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-570) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-9:00 阿拉斯加标准时间(AKST)、甘比尔群岛时间(GIT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-540">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-540) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-8:00 太平洋标准时间(PST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-480">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-480) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-7:00 山地标准时间(MST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-420">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-420) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-6:00 北美中部标准时间(CST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-360">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-360) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-5:00 北美东部标准时间(EST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-300">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-300) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-4:00 大西洋标准时间(AST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-240">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-240) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-3:30 纽芬兰标准时间(NST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-210">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-210) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-3:00 阿根廷时间(ART)、巴西利亚时间(BRT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-180">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-180) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-2:00 南乔治亚时间(GST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-120">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-120) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC-1:00 亚速尔时间(AZOT)、佛得角时间(CVT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="-60">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(-60) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC±0:00 格林威治标准时间(GMT)、世界标准时间(WET)、祖鲁时间(Z)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="0">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(0) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+1:00 欧洲中部时间(CET)、西非时间(WAT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="60">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(60) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
@@ -312,67 +337,67 @@ onUnmounted(() => {
             <span class="text-gray-600 text-sm"
               >UTC+2:00 欧洲东部时间(EET)、中部非洲时间(CAT)、以色列标准时间(IST)</span
             >
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="120">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(120) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+3:00 莫斯科时间(MSK)、东非时间(EAT)、阿拉伯标准时间(AST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="180">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(180) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+3:30 伊朗标准时间(IRST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="210">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(210) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+4:00 海湾标准时间(GST)、萨马拉时间(SAMT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="240">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(240) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+4:30 阿富汗时间(AFT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="270">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(270) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+5:00 巴基斯坦标准时间(PKT)、叶卡捷琳堡时间(YEKT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="300">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(300) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+5:30 印度标准时间(IST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="330">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(330) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+5:45 尼泊尔时间(NPT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="345">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(345) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+6:00 孟加拉时间(BDT)、不丹时间(BTT)、鄂木斯克时间(OMST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="360">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(360) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+6:30 缅甸时间(MMT)、科科斯群岛时间(CCT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="390">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(390) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+7:00 中南半岛时间(ICT)、克拉斯诺亚尔斯克时间(KRAT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="420">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(420) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
@@ -381,25 +406,25 @@ onUnmounted(() => {
               >UTC+8:00
               中国标准时间(CST)、新加坡时间(SGT)、澳大利亚西部标准时间(AWST)、香港时间(HKT)、菲律宾时间(PHT)</span
             >
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="480">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(480) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+8:45 澳大利亚中西部标准时间(ACWST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="525">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(525) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+9:00 日本标准时间(JST)、韩国标准时间(KST)、雅库茨克时间(YAKT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="540">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(540) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+9:30 澳大利亚中部标准时间(ACST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="570">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(570) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
@@ -407,43 +432,43 @@ onUnmounted(() => {
             <span class="text-gray-600 text-sm"
               >UTC+10:00 澳大利亚东部标准时间(AEST)、符拉迪沃斯托克（海参崴）时间(VLAT)</span
             >
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="600">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(600) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+10:30 豪勋爵岛标准时间(LHST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="630">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(630) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+11:00 所罗门群岛时间(SBT)、马加丹时间(MAGT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="660">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(660) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+12:00 新西兰标准时间(NZST)、斐济时间(FJT)、堪察加时间(PETT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="720">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(720) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+12:45 查塔姆标准时间(CHAST)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="765">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(765) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+13:00 汤加时间(TOT)、菲尼克斯群岛时间(PHOT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="780">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(780) }}</div>
           </div>
         </div>
         <div class="flex items-center justify-between p-4 hover:bg-gray-50 border-b">
           <div class="flex-1">
             <span class="text-gray-600 text-sm">UTC+14:00 莱恩群岛时间(LINT)</span>
-            <div class="text-lg font-mono text-gray-900 timezone-time" data-offset="840">-</div>
+            <div class="text-lg font-mono text-gray-900">{{ getTimezoneTime(840) }}</div>
           </div>
         </div>
       </div>
