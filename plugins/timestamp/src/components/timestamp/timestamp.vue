@@ -104,7 +104,7 @@ const modKey = isMac ? 'metaKey' : 'ctrlKey'
 const handleKeyboard = (e: KeyboardEvent) => {
   if (!e[modKey]) return
   const num = parseInt(e.key)
-  if (num < 1 || num > 5) return
+  if (isNaN(num) || num < 1 || num > 5) return
 
   const values = [localTimeFull.value, localTimeDate.value, timestampSeconds.value, timestampMilliseconds.value, utcTime.value]
   copyToClipboard(values[num - 1])
@@ -152,7 +152,7 @@ onUnmounted(() => {
         <!-- Local time date with dynamic timezone -->
         <div class="flex items-center justify-between p-4 hover:bg-gray-50">
           <div class="flex-1">
-            <span class="text-gray-600 text-sm">本地时间, 日期</span>
+            <span class="text-gray-600 text-sm">本地时间(日期)</span>
             <div class="text-lg font-mono text-gray-900">{{ localTimeDate }}</div>
           </div>
           <button
