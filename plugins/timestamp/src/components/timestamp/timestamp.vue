@@ -21,6 +21,8 @@ const copyToClipboard = async (text: string) => {
   if (text === '-') return
   try {
     ztools.copyText(text)
+    // 复制成功后退出插件
+    ztools.outPlugin(false)
   } catch (err) {
     console.error('复制失败:', err)
   }
