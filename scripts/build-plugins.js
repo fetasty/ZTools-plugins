@@ -254,7 +254,7 @@ async function packagePlugin(pluginName, version) {
 
       // 排除不需要的文件
       const excludes = ['.git', '.DS_Store', 'package-lock.json', 'npm-debug.log'];
-      if (excludes.includes(file)) {
+      if (excludes.includes(file) || file.endsWith('.zpx')) {
         return;
       }
 
