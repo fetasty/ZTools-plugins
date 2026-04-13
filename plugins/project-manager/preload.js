@@ -126,8 +126,140 @@ function decodeTextBuffer(buffer) {
     return new TextDecoder('utf-8').decode(buffer);
 }
 
+function findPmFromNvm(nodeExe, packageManager) {
+    // Search NVM directories for npm-cli.js or {pm}.cmd when the version dir lacks npm
+    const nvmSymlink = process.env.NVM_SYMLINK;
+    if (nvmSymlink) {
+        const cli = path.join(nvmSymlink, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+        if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
+        const cmd = path.join(nvmSymlink, `${packageManager}.cmd`);
+        if (fs.existsSync(cmd)) return `"${cmd}"`;
+    }
+    const nvmHome = process.env.NVM_HOME;
+    if (nvmHome) {
+        try {
+            for (const entry of fs.readdirSync(nvmHome)) {
+                const dir = path.join(nvmHome, entry);
+                if (!fs.statSync(dir).isDirectory()) continue;
+                const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+                if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
+                const cmd = path.join(dir, `${packageManager}.cmd`);
+                if (fs.existsSync(cmd)) return `"${cmd}"`;
+            }
+        } catch (_) {}
+    }
+    return null;
+}
+
+function ensureNodeExeInDir(dir) {
+    if (process.platform !== 'win32') return;
+    try {
+        const nodeExe = path.join(dir, 'node.exe');
+        if (fs.existsSync(nodeExe)) return;
+        const candidates = ['node64.exe', 'node32.exe'];
+        for (const name of candidates) {
+            const src = path.join(dir, name);
+            if (fs.existsSync(src)) {
+                try { fs.linkSync(src, nodeExe); } catch { fs.copyFileSync(src, nodeExe); }
+                return;
+            }
+        }
+    } catch (_) {}
+}
+
+function resolveTerminalNodeDir(nodePath) {
+    const trimmed = String(nodePath || '').trim();
+    if (!trimmed) return '';
+
+    let resolved = trimmed;
+    try {
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).isFile()) {
+            resolved = path.dirname(trimmed);
+            ensureNodeExeInDir(resolved);
+            return resolved;
+        }
+
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).isDirectory()) {
+            if (process.platform === 'win32') {
+                ensureNodeExeInDir(trimmed);
+                if (fs.existsSync(path.join(trimmed, 'node.exe'))) {
+                    return trimmed;
+                }
+            }
+
+            if (process.platform !== 'win32' && fs.existsSync(path.join(trimmed, 'node'))) {
+                return trimmed;
+            }
+
+            const binDir = path.join(trimmed, 'bin');
+            if (process.platform === 'win32') {
+                ensureNodeExeInDir(binDir);
+                if (fs.existsSync(path.join(binDir, 'node.exe'))) {
+                    return binDir;
+                }
+            }
+
+            if (process.platform !== 'win32' && fs.existsSync(path.join(binDir, 'node'))) {
+                return binDir;
+            }
+        }
+    } catch (_) {}
+
+    return trimmed;
+}
+
+function getTerminalSpawnOptions(nodePath) {
+    const nodeDir = resolveTerminalNodeDir(nodePath);
+    if (!nodeDir) {
+        return { detached: true, stdio: 'ignore' };
+    }
+
+    return {
+        detached: true,
+        stdio: 'ignore',
+        env: {
+            ...process.env,
+            PATH: `${nodeDir}${path.delimiter}${process.env.PATH || ''}`,
+        },
+    };
+}
+
+function escapeCmdDoubleQuotes(value) {
+    return String(value || '').replace(/"/g, '""');
+}
+
+function escapePowerShellSingleQuotes(value) {
+    return String(value || '').replace(/'/g, "''");
+}
+
 // Platform-adaptive: support both uTools and ZTools
 const platform = typeof ztools !== 'undefined' ? ztools : utools;
+
+// Port parsing helpers
+function parseLsofEndpoint(str) {
+    if (!str) return { address: '', port: 0 };
+    const lastColon = str.lastIndexOf(':');
+    if (lastColon < 0) return { address: str, port: 0 };
+    const address = str.substring(0, lastColon);
+    const port = parseInt(str.substring(lastColon + 1)) || 0;
+    return { address: address === '*' ? '0.0.0.0' : address, port };
+}
+
+function parseSsEndpoint(str) {
+    if (!str || str === '*:*') return { address: '*', port: null };
+    // IPv6: [::1]:port
+    const bracketEnd = str.lastIndexOf(']:');
+    if (bracketEnd >= 0) {
+        const address = str.substring(1, bracketEnd);
+        const port = parseInt(str.substring(bracketEnd + 2)) || null;
+        return { address, port };
+    }
+    const lastColon = str.lastIndexOf(':');
+    if (lastColon < 0) return { address: str, port: null };
+    const address = str.substring(0, lastColon);
+    const portStr = str.substring(lastColon + 1);
+    return { address, port: portStr === '*' ? null : (parseInt(portStr) || null) };
+}
 
 // Cleanup on exit
 platform.onPluginOut(() => {
@@ -628,9 +760,30 @@ window.services = {
             }
         }
 
-        // Construct command
+        // Construct command - resolve absolute path to package manager
         const pm = packageManager || 'npm';
-        const cmdStr = `${pm} run ${script}`;
+        let spawnCmd = pm;
+        let spawnArgs = ['run', script];
+
+        if (nodeDir && process.platform === 'win32') {
+            const nodeExe = path.join(nodeDir, 'node.exe');
+            const npmCliJs = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+            const pmCmd = path.join(nodeDir, `${pm}.cmd`);
+
+            if (fs.existsSync(npmCliJs)) {
+                spawnCmd = `"${nodeExe}" "${npmCliJs}"`;
+            } else if (fs.existsSync(pmCmd)) {
+                spawnCmd = `"${pmCmd}"`;
+            } else {
+                // Fallback: search NVM directories for npm
+                const found = findPmFromNvm(nodeExe, pm);
+                if (found) {
+                    spawnCmd = found;
+                }
+            }
+        }
+
+        const cmdStr = `${spawnCmd} run ${script}`;
 
         try {
             console.log('[Runner] Executing:', cmdStr);
@@ -640,7 +793,7 @@ window.services = {
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
             
-            const child = spawn(pm, ['run', script], {
+            const child = spawn(spawnCmd, ['run', script], {
                 cwd: projectPath,
                 shell: true,
                 env: env,
@@ -829,7 +982,7 @@ window.services = {
     },
     
     getAppVersion: async () => {
-        return "1.0.8";
+        return "1.1.1";
     },
     
     installUpdate: async (url) => {
@@ -889,48 +1042,86 @@ window.services = {
     },
     
     //************* 终端打开 *************
-    openInTerminal: async (projectPath, terminal) => {
+    openInTerminal: async (projectPath, terminal, nodePath) => {
         const term = (terminal || 'cmd').trim().toLowerCase();
+        const spawnOptions = getTerminalSpawnOptions(nodePath);
         
         if (process.platform === 'win32') {
             try {
                 const winPath = projectPath.replace(/\//g, "\\");
+                const winPathCmd = escapeCmdDoubleQuotes(winPath);
+                const pathEnvCmd = spawnOptions.env?.PATH ? escapeCmdDoubleQuotes(spawnOptions.env.PATH) : '';
+                const winPathPs = escapePowerShellSingleQuotes(winPath);
+                const pathEnvPs = spawnOptions.env?.PATH ? escapePowerShellSingleQuotes(spawnOptions.env.PATH) : '';
                 
                 if (term === 'powershell') {
-                     // PowerShell: start a new window, cd to path
-                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'powershell', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     const startupScript = pathEnvPs
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
+                        : `Set-Location '${winPathPs}'; node -v`;
+                     spawn('cmd', ['/C', 'start', '', 'powershell', '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (term === 'pwsh') {
-                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'pwsh', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     const startupScript = pathEnvPs
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
+                        : `Set-Location '${winPathPs}'; node -v`;
+                     spawn('cmd', ['/C', 'start', '', 'pwsh', '-NoExit', '-Command', startupScript], spawnOptions);
+                } else if (term === 'windows-terminal') {
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
+                        : `node -v`;
+                    spawn('wt', ['-d', winPath, 'cmd', '/K', startupCommand], spawnOptions);
+                } else if (term === 'cmder') {
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && cmder && node -v`
+                        : `cd /d "${winPathCmd}" && cmder && node -v`;
+                    spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
+                } else if (term === 'git-bash') {
+                    const gitBash = [
+                        path.join(process.env.ProgramFiles || '', 'Git', 'git-bash.exe'),
+                        path.join(process.env['ProgramFiles(x86)'] || '', 'Git', 'git-bash.exe'),
+                        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git', 'git-bash.exe'),
+                    ].find(fs.existsSync);
+
+                    if (gitBash) {
+                        spawn('cmd', ['/C', 'start', '', gitBash, `--cd=${winPath}`], spawnOptions);
+                    } else {
+                        const startupCommand = pathEnvCmd
+                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`
+                            : `cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`;
+                        spawn('cmd', ['/K', startupCommand], spawnOptions);
+                    }
                 } else {
                     // CMD (Default)
-                    spawn('cmd', ['/C', 'start', '', '/D', winPath, 'cmd'], { detached: true, stdio: 'ignore' });
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
+                        : `cd /d "${winPathCmd}" && node -v`;
+                    spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                 }
             } catch (e) {
                 console.error('Failed to open terminal', e);
             }
         } else if (process.platform === 'darwin') {
              try {
-                spawn('open', ['-a', 'Terminal', projectPath], { detached: true, stdio: 'ignore' });
+                spawn('open', ['-a', 'Terminal', projectPath], spawnOptions);
              } catch (e) {
                 console.error(e);
              }
         } else {
             // Linux
             const terms = [
-                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath] },
-                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath] },
-                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath] }
+                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath, '--', 'bash', '-c', 'node -v; exec bash'] },
+                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath, '-e', 'bash', '-c', 'node -v; exec bash'] },
+                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath, '-e', "bash -c 'node -v; exec bash'"] }
             ];
             
             const target = terms.find(t => t.id === term);
             
             if (target) {
-                 spawn(target.cmd, target.args, { detached: true, stdio: 'ignore' }).unref();
+                 spawn(target.cmd, target.args, spawnOptions).unref();
             } else {
                 // Fallback attempt
                 for (const t of terms) {
                     try {
-                        const child = spawn(t.cmd, t.args, { detached: true, stdio: 'ignore' });
+                        const child = spawn(t.cmd, t.args, spawnOptions);
                         child.on('error', () => {});
                         child.unref();
                         break;
@@ -938,6 +1129,219 @@ window.services = {
                 }
             }
         }
+    },
+
+    // ─── Port Management ─────────────────────────────────────────────────────
+
+    listUsedPorts: async () => {
+        return new Promise((resolve, reject) => {
+            if (process.platform === 'win32') {
+                // Windows: Use PowerShell Get-NetTCPConnection + Get-NetUDPEndpoint
+                const script = `
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$ports = @()
+$ports += Get-NetTCPConnection -ErrorAction SilentlyContinue | ForEach-Object {
+  [pscustomobject]@{
+    Protocol = 'TCP'
+    LocalAddress = if ($_.LocalAddress) { $_.LocalAddress.ToString() } else { '' }
+    LocalPort = $_.LocalPort
+    RemoteAddress = if ($_.RemoteAddress) { $_.RemoteAddress.ToString() } else { '' }
+    RemotePort = $_.RemotePort
+    State = if ($_.State) { $_.State.ToString() } else { 'UNKNOWN' }
+    OwningProcess = $_.OwningProcess
+  }
+}
+$ports += Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
+  [pscustomobject]@{
+    Protocol = 'UDP'
+    LocalAddress = if ($_.LocalAddress) { $_.LocalAddress.ToString() } else { '' }
+    LocalPort = $_.LocalPort
+    RemoteAddress = ''
+    RemotePort = $null
+    State = 'LISTEN'
+    OwningProcess = $_.OwningProcess
+  }
+}
+$pids = ($ports | Select-Object -ExpandProperty OwningProcess -Unique) -join ','
+$procs = @{}
+if ($pids) {
+  Get-CimInstance Win32_Process -Filter "ProcessId IN ($pids)" -ErrorAction SilentlyContinue | ForEach-Object {
+    $procs[$_.ProcessId] = @{ Name = $_.Name; Path = $_.ExecutablePath; Cmd = $_.CommandLine }
+  }
+}
+$result = $ports | ForEach-Object {
+  $p = $procs[$_.OwningProcess]
+  [pscustomobject]@{
+    protocol = $_.Protocol
+    local_address = $_.LocalAddress
+    local_port = $_.LocalPort
+    remote_address = if ($_.RemoteAddress -and $_.RemoteAddress -ne '') { $_.RemoteAddress } else { $null }
+    remote_port = $_.RemotePort
+    state = $_.State.ToUpper()
+    pid = $_.OwningProcess
+    process_name = if ($p) { $p.Name } else { $null }
+    executable_path = if ($p) { $p.Path } else { $null }
+    command_line = if ($p) { $p.Cmd } else { $null }
+  }
+} | Sort-Object local_port, protocol, pid
+$result | ConvertTo-Json -Compress`;
+
+                exec(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, {
+                    maxBuffer: 50 * 1024 * 1024,
+                    windowsHide: true,
+                    encoding: 'utf8',
+                }, (error, stdout) => {
+                    if (error) return reject(error);
+                    try {
+                        const trimmed = (stdout || '').trim();
+                        if (!trimmed || trimmed === 'null') return resolve([]);
+                        const parsed = JSON.parse(trimmed);
+                        resolve(Array.isArray(parsed) ? parsed : [parsed]);
+                    } catch (e) {
+                        reject(new Error('Failed to parse port data: ' + e.message));
+                    }
+                });
+            } else if (process.platform === 'darwin') {
+                // macOS: Use lsof
+                exec('lsof -i -n -P', { maxBuffer: 50 * 1024 * 1024 }, (error, stdout) => {
+                    if (error && !stdout) return resolve([]);
+                    const lines = (stdout || '').split('\n').slice(1);
+                    const entries = [];
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parts = line.split(/\s+/);
+                        if (parts.length < 9) continue;
+
+                        const processName = parts[0];
+                        const pid = parseInt(parts[1]) || null;
+                        const rawType = (parts[7] || '').toUpperCase();
+                        const protocol = rawType === 'UDP' ? 'UDP' : 'TCP';
+                        const namePart = parts[8] || '';
+                        const state = parts[9] || (protocol === 'UDP' ? 'LISTEN' : 'UNKNOWN');
+
+                        let localAddr = '', localPort = 0, remoteAddr = null, remotePort = null;
+
+                        if (namePart.includes('->')) {
+                            const [local, remote] = namePart.split('->');
+                            const lp = parseLsofEndpoint(local);
+                            const rp = parseLsofEndpoint(remote);
+                            localAddr = lp.address;
+                            localPort = lp.port;
+                            remoteAddr = rp.address || null;
+                            remotePort = rp.port || null;
+                        } else {
+                            const lp = parseLsofEndpoint(namePart);
+                            localAddr = lp.address;
+                            localPort = lp.port;
+                        }
+
+                        if (!localPort) continue;
+
+                        const normalizedState = state.replace(/[()]/g, '').toUpperCase();
+
+                        entries.push({
+                            protocol,
+                            local_address: localAddr,
+                            local_port: localPort,
+                            remote_address: remoteAddr,
+                            remote_port: remotePort,
+                            state: normalizedState === 'ESTABLISHED' ? 'ESTABLISHED'
+                                : normalizedState === 'LISTEN' ? 'LISTEN'
+                                : normalizedState === 'TIME_WAIT' ? 'TIME_WAIT'
+                                : normalizedState === 'CLOSE_WAIT' ? 'CLOSE_WAIT'
+                                : normalizedState,
+                            pid,
+                            process_name: processName,
+                            executable_path: null,
+                            command_line: null,
+                        });
+                    }
+
+                    entries.sort((a, b) => a.local_port - b.local_port || a.protocol.localeCompare(b.protocol));
+                    resolve(entries);
+                });
+            } else {
+                // Linux: Use ss
+                exec('ss -tunap', { maxBuffer: 50 * 1024 * 1024 }, (error, stdout) => {
+                    if (error && !stdout) return resolve([]);
+                    const lines = (stdout || '').split('\n').slice(1);
+                    const entries = [];
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parts = line.split(/\s+/);
+                        if (parts.length < 5) continue;
+
+                        const proto = parts[0].toUpperCase();
+                        const protocol = (proto === 'TCP' || proto === 'TCP6') ? 'TCP' : 'UDP';
+
+                        const stateMap = {
+                            'LISTEN': 'LISTEN', 'ESTAB': 'ESTABLISHED', 'TIME-WAIT': 'TIME_WAIT',
+                            'CLOSE-WAIT': 'CLOSE_WAIT', 'SYN-SENT': 'SYN_SENT', 'SYN-RECV': 'SYN_RECV',
+                            'FIN-WAIT-1': 'FIN_WAIT_1', 'FIN-WAIT-2': 'FIN_WAIT_2', 'UNCONN': 'LISTEN',
+                        };
+                        const state = stateMap[parts[1]] || parts[1].toUpperCase();
+
+                        const localEp = parseSsEndpoint(parts[4]);
+                        const remoteEp = parts.length > 5 ? parseSsEndpoint(parts[5]) : { address: null, port: null };
+
+                        if (!localEp.port) continue;
+
+                        let pid = null, processName = null;
+                        const usersField = parts.find(p => p.startsWith('users:'));
+                        if (usersField) {
+                            const match = usersField.match(/\("([^"]+)",pid=(\d+)/);
+                            if (match) {
+                                processName = match[1];
+                                pid = parseInt(match[2]) || null;
+                            }
+                        }
+
+                        let executablePath = null, commandLine = null;
+                        if (pid) {
+                            try { executablePath = fs.readlinkSync(`/proc/${pid}/exe`); } catch (_) {}
+                            try { commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf-8').replace(/\0/g, ' ').trim(); } catch (_) {}
+                        }
+
+                        entries.push({
+                            protocol,
+                            local_address: localEp.address,
+                            local_port: localEp.port,
+                            remote_address: remoteEp.address && remoteEp.address !== '*' ? remoteEp.address : null,
+                            remote_port: remoteEp.port,
+                            state,
+                            pid,
+                            process_name: processName,
+                            executable_path: executablePath,
+                            command_line: commandLine,
+                        });
+                    }
+
+                    entries.sort((a, b) => a.local_port - b.local_port || a.protocol.localeCompare(b.protocol));
+                    resolve(entries);
+                });
+            }
+        });
+    },
+
+    terminateProcessByPid: async (pid) => {
+        return new Promise((resolve, reject) => {
+            if (!pid || typeof pid !== 'number') {
+                return reject(new Error('Invalid PID'));
+            }
+            if (process.platform === 'win32') {
+                exec(`taskkill /PID ${pid} /T /F`, { windowsHide: true }, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+            } else {
+                exec(`kill -9 ${pid}`, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+            }
+        });
     },
 
     // ─── Git ─────────────────────────────────────────────────────────────────

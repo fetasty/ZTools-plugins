@@ -1,4 +1,4 @@
-import type { PlatformAPI, ProjectInfo, TerminalInfo } from '../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry } from '../types';
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
 
 // Declare global interface for uTools services
@@ -42,9 +42,9 @@ export class UToolsAdapter implements PlatformAPI {
   stopProjectCommand(id: string): Promise<void> { return this.service.stopProjectCommand(id); }
 
   openInEditor(path: string, editor?: string): Promise<void> { return this.service.openInEditor(path, editor); }
-    openInTerminal(path: string, terminal?: string): Promise<void> {
+    openInTerminal(path: string, terminal?: string, nodePath?: string): Promise<void> {
         if ((this.service as any).openInTerminal) {
-            return (this.service as any).openInTerminal(path, terminal);
+            return (this.service as any).openInTerminal(path, terminal, nodePath);
         }
         return this.service.openFolder(path);
     }
@@ -156,6 +156,20 @@ export class UToolsAdapter implements PlatformAPI {
       return Promise.resolve([
           { id: 'cmd', name: 'Command Prompt (cmd.exe)' }
       ]);
+  }
+
+  async listUsedPorts(): Promise<PortEntry[]> {
+      if (this.service.listUsedPorts) {
+          return this.service.listUsedPorts();
+      }
+      return Promise.reject(new Error('Port management is not supported in plugin mode'));
+  }
+
+  async terminateProcessByPid(pid: number): Promise<void> {
+      if ((this.service as any).terminateProcessByPid) {
+          return (this.service as any).terminateProcessByPid(pid);
+      }
+      return Promise.reject(new Error('Port management is not supported in plugin mode'));
   }
 
   // Git
