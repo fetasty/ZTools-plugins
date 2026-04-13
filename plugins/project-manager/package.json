@@ -5,7 +5,7 @@
     "type": "git",
     "url": "https://github.com/cuteyuchen/project-manager.git"
   },
-  "version": "1.0.8",
+  "version": "1.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,7 +18,8 @@
     "build:ztools": "vue-tsc --noEmit && vite build --mode ztools && node scripts/post-build-ztools.cjs",
     "publish:ztools": "node scripts/publish-ztools.cjs",
     "publish:ztools:dry": "node scripts/publish-ztools.cjs --dry-run",
-    "bump": "node scripts/bump-version.cjs"
+    "bump": "node scripts/bump-version.cjs",
+    "bump:version": "node scripts/bump-version-only.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
